@@ -19,17 +19,19 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
 import Data.Int
--- import qualified Data.ByteString       as B
-import Data.ByteString.Lazy (fromStrict)
+import qualified Data.ByteString       as B
 import qualified Data.ByteString.Char8 as BC
-import qualified Data.ByteString.Lazy  as BL (copy, toStrict, fromStrict)
-import Data.Binary
-import Data.Binary.Put
-import Data.Binary.Get
-import GHC.Generics (Generic)
+import qualified Data.ByteString.Lazy  as BL -- (copy, toStrict, fromStrict)
+import           Data.Binary
+import           Data.Binary.Put
+import           Data.Binary.Get
+import           GHC.Generics (Generic)
+import Network.Socket hiding (send, sendTo, recv, recvFrom)
+import Network.Socket.ByteString
+import Numeric (showHex) -- For prettyprint debugging
 
-import           Network.Socket
-import qualified Network.Socket.ByteString as BS
+prettyPrintC :: BC.ByteString -> String
+prettyPrintC = concat . map (flip showHex "") . B.unpack
 
 {-
 From wiki.vg/Rcon
@@ -49,19 +51,21 @@ Payload     byte[]      ASCII text
 
 -}
 data Packet = Packet {
-       request_length   :: Int
-     , request_id       :: Int
+       request_id       :: Int
      , request_type     :: Int
      , payload          :: String
 } deriving (Show)
 
 -- Make it possible to encode/decode Packets from binary format.
 instance Binary Packet where
-  put (Packet len id tp payload) = do
+  put (Packet id tp payload) = do
+      let packedPayload = (BC.pack payload)
+      let len = 8 + (BC.length packedPayload) + 2
+
       putWord32le $ fromIntegral len
       putWord32le $ fromIntegral id
       putWord32le $ fromIntegral tp
-      putByteString (BC.pack payload)
+      putByteString packedPayload
       -- Put the two final buffer chars
       putWord8 0
       putWord8 0
@@ -70,12 +74,13 @@ instance Binary Packet where
           len     <- getWord32le
           id      <- getWord32le
           tp      <- getWord32le
-          payload <- getByteString ((fromIntegral len) - 8)    -- We've already parsed the 2nd and 3rd fields, and the len is only for AFTER the first field
+          payload <- getByteString ((fromIntegral len) - 10)    -- We've already parsed the 2nd and 3rd fields, and the len is only for AFTER the first field
 
+          lastBuffer <- getWord16le
           -- TODO: Ensure the last two are the null bytes
+          -- TODO: Keep going into the next packet and accumulate their payloads if needed.
 
-          return (Packet (fromIntegral len) (fromIntegral id) (fromIntegral tp) (BC.unpack payload))
-
+          return (Packet (fromIntegral id) (fromIntegral tp) (BC.unpack payload))
 
 {-
 Packets
@@ -96,24 +101,61 @@ Code exists in the notchian server to split large responses (>4096 bytes) into m
 
 sendPacket :: Socket -> Packet -> IO ()
 sendPacket sock pkt = do
-  BS.sendAll sock (BL.toStrict (encode pkt))
-  --rMsg <- BS.recv sock 1024
-  --let r = (decode (BL.fromStrict rMsg)) :: Packet
-  --putStrLn $ "SendPacket Response: \n  " ++ (show r)
+  let ePkt = (BL.toStrict (encode pkt))
+  putStrLn "Encoded packet:"
+  print ePkt
+  let dPkt = (decode (BL.fromStrict ePkt))::Packet
+  putStrLn "Re-decoded as a packet:"
+  print dPkt
+
+  sendAll sock ePkt
+
+  lenBytes <- recv sock 4
+  let len = (decode (BL.fromStrict lenBytes))::Int32
+  putStrLn "Incoming packet first 4 bytes indicate length: "
+  print len
+  putStrLn "--"
+  packetByte <- recv sock (fromIntegral len ::Int)
+  let rPkt = (decode (BL.fromStrict packetByte)) :: Packet
+
+  putStrLn "Prettyprint bytestring: " --("++ (show len) ++")"
+  putStrLn $ prettyPrintC packetByte
+  putStrLn "And returned packet is:"
+  print rPkt
   --return (decode (BL.fromStrict rMsg)) ::Packet
+
   return ()
 
 
+
 main :: IO ()
-main = do
+main = withSocketsDo $ do
+
+  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "25575")
+  let serveraddr = head addrinfos
+
+  sock <- socket (addrFamily serveraddr) Stream defaultProtocol
+
+  -- Mark the socket for keep-alive handling since it may be idle
+  -- for long periods of time
+  setSocketOption sock KeepAlive 1
+
+  -- Connect to server
+  connect sock (addrAddress serveraddr)
+
+
+
+
+  -- TESTING CODE BELOW:
 
   let sesskey = 1965::Int
-  let authPacket = Packet 10 sesskey 3 ""
+  let authPacket = Packet sesskey 3 "password"
 
-  print "Auth Packet is:"
+  putStrLn "Sending auth packet:"
   print authPacket
+  sendPacket sock authPacket
 
-  sock <- socket AF_INET Stream defaultProtocol
-  connect sock addr
+  --putStrLn "Response was: "
+  --print resp
 
-  sendPacket authPacket
+  sClose sock
