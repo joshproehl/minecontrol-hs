@@ -28,10 +28,6 @@ import           Data.Binary.Get
 import           GHC.Generics (Generic)
 import Network.Socket hiding (send, sendTo, recv, recvFrom)
 import Network.Socket.ByteString
-import Numeric (showHex) -- For prettyprint debugging
-
-prettyPrintC :: BC.ByteString -> String
-prettyPrintC = concat . map (flip showHex "") . B.unpack
 
 {-
 From wiki.vg/Rcon
@@ -50,15 +46,15 @@ Payload     byte[]      ASCII text
 2-byte pad  byte, byte  Two null bytes
 
 -}
-data Packet = Packet {
+data MCRConPacket = MCRConPacket {
        request_id       :: Int
      , request_type     :: Int
      , payload          :: String
 } deriving (Show)
 
 -- Make it possible to encode/decode Packets from binary format.
-instance Binary Packet where
-  put (Packet id tp payload) = do
+instance Binary MCRConPacket where
+  put (MCRConPacket id tp payload) = do
     let packedPayload = (BC.pack payload)
     let len = 8 + (BC.length packedPayload) + 2
 
@@ -80,7 +76,7 @@ instance Binary Packet where
     -- TODO: Ensure the last two are the null bytes
     -- TODO: Keep going into the next packet and accumulate their payloads if needed.
 
-    return $ Packet (fromIntegral id) (fromIntegral tp) (BC.unpack (BL.toStrict payload))
+    return $ MCRConPacket (fromIntegral id) (fromIntegral tp) (BC.unpack (BL.toStrict payload))
 
 
 readInt32 :: BL.ByteString -> Int
@@ -109,28 +105,18 @@ Code exists in the notchian server to split large responses (>4096 bytes) into m
 -}
 
 
-sendPacket :: Socket -> Packet -> IO Packet
+sendPacket :: Socket -> MCRConPacket -> IO MCRConPacket
 sendPacket sock pkt = do
   sendAll sock (BL.toStrict (encode pkt))
-  --retPkt <- readPacket sock
-  --return retPkt
   readPacket sock
 
-readPacket :: Socket -> IO Packet
+readPacket :: Socket -> IO MCRConPacket
 readPacket sock = do
   lenBytes <- recv sock 4
   let len = fromIntegral $ readInt32 $ BL.fromStrict lenBytes
-  putStrLn "Incoming packet first 4 bytes indicate remaining length of " -- ++ (show len) ++ " bytes"
-  print len
   packetByte <- recv sock len
-  let rPkt = (decode (BL.fromStrict packetByte)) :: Packet
-
-  putStrLn "Prettyprint bytestring: " --("++ (show len) ++")"
-  putStrLn $ prettyPrintC packetByte
-  putStrLn "And returned packet is:"
-  print rPkt
-  return rPkt
-  --return (decode (BL.fromStrict rMsg)) ::Packet
+  let retPkt = (decode (BL.fromStrict packetByte)) :: MCRConPacket
+  return retPkt
 
 
 
@@ -155,13 +141,17 @@ main = withSocketsDo $ do
   -- TESTING CODE BELOW:
 
   let sesskey = 1965::Int
-  let authPacket = Packet sesskey 3 "password"
+  let authPacket = MCRConPacket sesskey 3 "password"
 
   putStrLn "Sending auth packet:"
-  print authPacket
-  sendPacket sock authPacket
+  authResp <- sendPacket sock authPacket
 
-  --putStrLn "Response was: "
-  --print resp
+  putStrLn "Auth Response was: "
+  print authResp
+
+  let cmdPacket = MCRConPacket sesskey 2 "list"
+  cmdResp <- sendPacket sock cmdPacket
+  putStrLn "Command response was: "
+  print cmdResp
 
   sClose sock
