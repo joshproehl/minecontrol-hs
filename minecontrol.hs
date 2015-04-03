@@ -59,28 +59,38 @@ data Packet = Packet {
 -- Make it possible to encode/decode Packets from binary format.
 instance Binary Packet where
   put (Packet id tp payload) = do
-      let packedPayload = (BC.pack payload)
-      let len = 8 + (BC.length packedPayload) + 2
+    let packedPayload = (BC.pack payload)
+    let len = 8 + (BC.length packedPayload) + 2
 
-      putWord32le $ fromIntegral len
-      putWord32le $ fromIntegral id
-      putWord32le $ fromIntegral tp
-      putByteString packedPayload
-      -- Put the two final buffer chars
-      putWord8 0
-      putWord8 0
+    putWord32le $ fromIntegral len
+    putWord32le $ fromIntegral id
+    putWord32le $ fromIntegral tp
+    putByteString packedPayload
+    -- Put the two final buffer chars
+    putWord8 0
+    putWord8 0
 
   get = do
-          len     <- getWord32le
-          id      <- getWord32le
-          tp      <- getWord32le
-          payload <- getByteString ((fromIntegral len) - 10)    -- We've already parsed the 2nd and 3rd fields, and the len is only for AFTER the first field
+    id      <- getWord32le
+    tp      <- getWord32le
+    --payload <- getByteString ((fromIntegral len) - 10)    -- We've already parsed the 2nd and 3rd fields, and the len is only for AFTER the first field
+    payload <- getLazyByteStringNul
 
-          lastBuffer <- getWord16le
-          -- TODO: Ensure the last two are the null bytes
-          -- TODO: Keep going into the next packet and accumulate their payloads if needed.
+    lastBuffer <- getWord8
+    -- TODO: Ensure the last two are the null bytes
+    -- TODO: Keep going into the next packet and accumulate their payloads if needed.
 
-          return (Packet (fromIntegral id) (fromIntegral tp) (BC.unpack payload))
+    return $ Packet (fromIntegral id) (fromIntegral tp) (BC.unpack (BL.toStrict payload))
+
+
+readInt32 :: BL.ByteString -> Int
+readInt32 s = runGet readIntGet s
+            where
+            readIntGet = do
+                b <- getWord32le
+                let c = (fromIntegral b)::Int
+                return c
+
 
 {-
 Packets
@@ -99,32 +109,28 @@ Code exists in the notchian server to split large responses (>4096 bytes) into m
 -}
 
 
-sendPacket :: Socket -> Packet -> IO ()
+sendPacket :: Socket -> Packet -> IO Packet
 sendPacket sock pkt = do
-  let ePkt = (BL.toStrict (encode pkt))
-  putStrLn "Encoded packet:"
-  print ePkt
-  let dPkt = (decode (BL.fromStrict ePkt))::Packet
-  putStrLn "Re-decoded as a packet:"
-  print dPkt
+  sendAll sock (BL.toStrict (encode pkt))
+  --retPkt <- readPacket sock
+  --return retPkt
+  readPacket sock
 
-  sendAll sock ePkt
-
+readPacket :: Socket -> IO Packet
+readPacket sock = do
   lenBytes <- recv sock 4
-  let len = (decode (BL.fromStrict lenBytes))::Int32
-  putStrLn "Incoming packet first 4 bytes indicate length: "
+  let len = fromIntegral $ readInt32 $ BL.fromStrict lenBytes
+  putStrLn "Incoming packet first 4 bytes indicate remaining length of " -- ++ (show len) ++ " bytes"
   print len
-  putStrLn "--"
-  packetByte <- recv sock (fromIntegral len ::Int)
+  packetByte <- recv sock len
   let rPkt = (decode (BL.fromStrict packetByte)) :: Packet
 
   putStrLn "Prettyprint bytestring: " --("++ (show len) ++")"
   putStrLn $ prettyPrintC packetByte
   putStrLn "And returned packet is:"
   print rPkt
+  return rPkt
   --return (decode (BL.fromStrict rMsg)) ::Packet
-
-  return ()
 
 
 
