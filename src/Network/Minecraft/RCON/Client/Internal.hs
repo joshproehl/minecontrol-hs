@@ -1,23 +1,24 @@
-{- LANGUAGE DeriveGeneric #-}
+--------------------------------------------------------------------------------
+-- |
+--  Module      :  Internal
+--  License     :  GPL
+--
+--  Maintainer  :  Josh Proehl
+--  Stability   :  experimental
+--  Portability :  
+--
+-- The plumbing for the Mincraft RCON client.
+--
+--------------------------------------------------------------------------------
 
-{-
-minecontrol.hs - A library for interacting with an RCON enabled minecraft server
-Copyright (C) 2015  Josh Proehl <josh@daedalusdreams.com>
-***************************************************************************
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Lesser General Public License for more details.
-You should have received a copy of the GNU Lesser General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
-***************************************************************************
--}
-
-
+module Network.Minecraft.RCON.Client.Internal
+  (
+    MCRConHandle
+  , MCRConPacket
+  , mcGetConnection
+  , mcCloseConnection
+  , mcCommand
+  ) where
 import           Data.Int
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Char8 as BC
@@ -25,7 +26,6 @@ import qualified Data.ByteString.Lazy  as BL -- (copy, toStrict, fromStrict)
 import           Data.Binary
 import           Data.Binary.Put
 import           Data.Binary.Get
-import           GHC.Generics (Generic)
 import           Network.Socket hiding (send, sendTo, recv, recvFrom)
 import           Network.Socket.ByteString
 import           System.Random
@@ -156,10 +156,3 @@ mcCommand conn cmd = do
   return str
 
 
-main :: IO ()
-main = do
-  conn <- mcGetConnection "127.0.0.1" "25575" "password"
-  putStrLn "Executing list command:"
-  retPkt <- mcCommand conn "list"
-  print retPkt
-  mcCloseConnection conn

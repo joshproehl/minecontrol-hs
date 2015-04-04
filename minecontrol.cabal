@@ -1,0 +1,61 @@
+Name:           minecontrol
+Version:        0.0.1
+Homepage:       https://github.com/joshproehl/minecontrol-hs
+Bug-Reports:    https://github.com/joshproehl/minecontrol-hs/issues
+Stability:      experimental
+License:        GPL
+Author:         Josh Proehl (josh@daedalusdreams.com)
+Maintainer:     josh@daedalusdreams.com
+Category:       network, minecraft
+Synopsis:       Connect to and control a Minecraft server
+Description:
+  Connect to an RCON enabled minecraft server and issue commands to it. Also
+  provides a series of datatypes to make working with minecraft servers from
+  other programs easier.
+  .
+  Issues, PR's, etc, welcome via GitHub!
+
+Tested-With:    GHC==7.10.1
+Cabal-Version:  >= 1.22.2.0
+Build-Type:     Simple
+
+Source-Repository  head
+  type:            git
+  location:        git://github.com/joshproehl/minecontrol-hs.git
+
+Flag build-examples
+  Description: Build the example programs (defaults to True)
+  Default:     True
+
+Library
+   Build-Depends:
+      base >=3 && < 5,
+      binary >= 0.7,
+      network >= 2.3,
+      bytestring >= 0.10,
+      random >= 1.1
+
+   Hs-Source-Dirs: src/
+
+   Exposed-Modules:
+      Network.Minecraft.RCON.Client
+      Network.Minecraft.RCON.Client.Internal
+
+   ghc-options:
+      -Wall
+
+-- Examples
+Executable         console
+   if !flag(build-examples)
+     Buildable: False
+
+   Main-Is:        Console.hs
+   Hs-Source-Dirs: examples/ 
+
+   ghc-options:
+      -Wall
+
+   Build-Depends:
+      base,
+      minecontrol
+
