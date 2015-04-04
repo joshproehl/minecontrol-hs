@@ -18,7 +18,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 -}
 
 
-import Data.Int
+import           Data.Int
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy  as BL -- (copy, toStrict, fromStrict)
@@ -26,8 +26,15 @@ import           Data.Binary
 import           Data.Binary.Put
 import           Data.Binary.Get
 import           GHC.Generics (Generic)
-import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import Network.Socket.ByteString
+import           Network.Socket hiding (send, sendTo, recv, recvFrom)
+import           Network.Socket.ByteString
+import           System.Random
+
+
+data MCRConHandle = MCRConHandle {
+    mcrcon_sock     :: Socket
+  , mcrcon_sesskey  :: Int
+} deriving (Show)
 
 {-
 From wiki.vg/Rcon
@@ -45,11 +52,24 @@ Type        int         3 for login, 2 to run a command, 0 for a multi-packet re
 Payload     byte[]      ASCII text
 2-byte pad  byte, byte  Two null bytes
 
+Packets
+
+3: Login
+  Outgoing payload: password.
+  If the server returns a packet with the same request ID, auth was successful (note: packet type is 2, not 3). If you get an request ID of -1, auth failed (wrong password).
+2: Command
+  Outgoing payload should be the command to run, e.g. time set 0
+0: Command response
+  Incoming payload is the output of the command, though many commands return nothing, and there's no way of detecting unknown commands.
+  The output of the command may be split over multiple packets, each containing 4096 bytes (less for the last packet). Each packet contains part of the payload (and the two-byte padding). The last packet sent is the end of the output.
+
+Maximum request length: 1460 (giving a max payload length of 1446)
+Code exists in the notchian server to split large responses (>4096 bytes) into multiple smaller packets. However, the code that actually encodes each packet expects a max length of 1248, giving a max response payload length of 1234 bytes.
 -}
 data MCRConPacket = MCRConPacket {
-       request_id       :: Int
-     , request_type     :: Int
-     , payload          :: String
+       mcrcon_request_id       :: Int
+     , mcrcon_request_type     :: Int
+     , mcrcon_payload          :: String
 } deriving (Show)
 
 -- Make it possible to encode/decode Packets from binary format.
@@ -88,42 +108,19 @@ readInt32 s = runGet readIntGet s
                 return c
 
 
-{-
-Packets
-
-3: Login
-  Outgoing payload: password.
-  If the server returns a packet with the same request ID, auth was successful (note: packet type is 2, not 3). If you get an request ID of -1, auth failed (wrong password).
-2: Command
-  Outgoing payload should be the command to run, e.g. time set 0
-0: Command response
-  Incoming payload is the output of the command, though many commands return nothing, and there's no way of detecting unknown commands.
-  The output of the command may be split over multiple packets, each containing 4096 bytes (less for the last packet). Each packet contains part of the payload (and the two-byte padding). The last packet sent is the end of the output.
-
-Maximum request length: 1460 (giving a max payload length of 1446)
-Code exists in the notchian server to split large responses (>4096 bytes) into multiple smaller packets. However, the code that actually encodes each packet expects a max length of 1248, giving a max response payload length of 1234 bytes.
--}
-
-
-sendPacket :: Socket -> MCRConPacket -> IO MCRConPacket
-sendPacket sock pkt = do
-  sendAll sock (BL.toStrict (encode pkt))
-  readPacket sock
-
-readPacket :: Socket -> IO MCRConPacket
-readPacket sock = do
-  lenBytes <- recv sock 4
+mcTransact :: MCRConHandle -> MCRConPacket -> IO MCRConPacket
+mcTransact conn pkt = do
+  sendAll (mcrcon_sock conn) (BL.toStrict (encode pkt))
+  lenBytes <- recv (mcrcon_sock conn) 4
   let len = fromIntegral $ readInt32 $ BL.fromStrict lenBytes
-  packetByte <- recv sock len
+  packetByte <- recv (mcrcon_sock conn) len
   let retPkt = (decode (BL.fromStrict packetByte)) :: MCRConPacket
   return retPkt
 
 
-
-main :: IO ()
-main = withSocketsDo $ do
-
-  addrinfos <- getAddrInfo Nothing (Just "127.0.0.1") (Just "25575")
+mcGetConnection :: String -> String -> String -> IO MCRConHandle
+mcGetConnection url port password = withSocketsDo $ do
+  addrinfos <- getAddrInfo Nothing (Just url) (Just port) -- TODO: give some default values? (127.0.0.1 and 25575)
   let serveraddr = head addrinfos
 
   sock <- socket (addrFamily serveraddr) Stream defaultProtocol
@@ -135,23 +132,34 @@ main = withSocketsDo $ do
   -- Connect to server
   connect sock (addrAddress serveraddr)
 
+  -- Generate a sort-of-unique session key
+  sesskey <- randomRIO(1,99999999::Int32)
+
+  let conn = MCRConHandle sock (fromIntegral sesskey)
+
+  authResponse <- mcTransact conn (MCRConPacket (fromIntegral sesskey) 3 password)
+
+  -- TODO: Check auth response and make sure we authed properly, and only return the conn handle if it worked!
+
+  return conn
 
 
+mcCloseConnection :: MCRConHandle -> IO ()
+mcCloseConnection conn = do
+  sClose (mcrcon_sock conn)
 
-  -- TESTING CODE BELOW:
 
-  let sesskey = 1965::Int
-  let authPacket = MCRConPacket sesskey 3 "password"
+mcCommand :: MCRConHandle -> String -> IO String
+mcCommand conn cmd = do
+  retPkt <- mcTransact conn (MCRConPacket (mcrcon_sesskey conn) 2 cmd)
+  let str = mcrcon_payload retPkt
+  return str
 
-  putStrLn "Sending auth packet:"
-  authResp <- sendPacket sock authPacket
 
-  putStrLn "Auth Response was: "
-  print authResp
-
-  let cmdPacket = MCRConPacket sesskey 2 "list"
-  cmdResp <- sendPacket sock cmdPacket
-  putStrLn "Command response was: "
-  print cmdResp
-
-  sClose sock
+main :: IO ()
+main = do
+  conn <- mcGetConnection "127.0.0.1" "25575" "password"
+  putStrLn "Executing list command:"
+  retPkt <- mcCommand conn "list"
+  print retPkt
+  mcCloseConnection conn
