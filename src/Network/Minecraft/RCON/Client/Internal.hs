@@ -11,14 +11,8 @@
 --
 --------------------------------------------------------------------------------
 
-module Network.Minecraft.RCON.Client.Internal
-  (
-    MCRConHandle
-  , MCRConPacket
-  , mcGetConnection
-  , mcCloseConnection
-  , mcCommand
-  ) where
+module Network.Minecraft.RCON.Client.Internal (module Network.Minecraft.RCON.Client.Internal) where
+
 import           Data.Int
 import qualified Data.ByteString       as B
 import qualified Data.ByteString.Char8 as BC

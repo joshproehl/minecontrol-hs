@@ -8,7 +8,10 @@
 --  Portability :  
 --
 -- The main interface for connecting to the Minecraft RCON server.
+-- Exports the minimum required for a connection, sending commands as strings,
+-- and getting back results as strings.
 --
+-- For example usage see the README.md file or examples/Console.hs
 --
 --------------------------------------------------------------------------------
 
